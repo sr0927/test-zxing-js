@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title></title>
+    <script src="https://unpkg.com/@zxing/library@latest"></script>
+    <style>
+        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; background: #f0f0f0; }
+        #scanner-container { position: relative; width: 100vw; max-width: 480px; height: 70vh; overflow: hidden; background: #000; border-radius: 12px; }
+        video { width: 100%; height: 100%; object-fit: cover; }
+        canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+        .hint { position: absolute; bottom: 20px; color: white; background: rgba(0,0,0,0.5); padding: 5px 15px; border-radius: 20px; }
+    </style>
+</head>
+<body>
+
+    <div style="position: relative; display: inline-block; width: 100%; max-width: 640px;">
+    <select id="cameraSelect"></select><br>
+    <div style="position: relative;">
+        <video id="video" width="100%" height="auto" style="border: 1px solid gray" playsinline></video>
+        <canvas id="overlay" style="position: absolute; top: 0; left: 0; pointer-events: none;"></canvas>
+    </div>
+</div>
+<p>結果：<span id="resultText">等待掃描...</span></p>
+
+<script src="https://unpkg.com/@zxing/library@latest"></script>
+<script>
+    let codeReader = new ZXing.BrowserMultiFormatReader();
+    let selectedDeviceId;
+    const canvas = document.getElementById('overlay');
+    const ctx = canvas.getContext('2d');
+    const video = document.getElementById('video');
+
+    window.addEventListener('load', loadDevicesAndPlay);
+
+    async function loadDevicesAndPlay() {
+        try {
+            const devices = await codeReader.listVideoInputDevices();
+            var cameraselect = document.getElementById("cameraSelect");
+            cameraselect.innerHTML = "";
+            var defaultIndex = 0;
+
+            devices.forEach((device, index) => {
+                var label = device.label || `Camera ${index}`;
+                cameraselect.add(new Option(label, device.deviceId));
+                if (label.toLowerCase().includes("back")) defaultIndex = index;
+            });
+
+            if (devices.length > 0) {
+                cameraselect.selectedIndex = defaultIndex;
+                selectedDeviceId = devices[defaultIndex].deviceId;
+                startScanning(selectedDeviceId);
+            }
+        } catch (err) {
+            console.error("初始化失敗:", err);
+        }
+    }
+
+    function startScanning(deviceId) {
+        codeReader.reset();
+        
+        // 開始解碼
+        codeReader.decodeFromVideoDevice(deviceId, 'video', (result, err) => {
+            // 每次回調都同步 Canvas 尺寸 (防止視窗縮放導致偏移)
+            if (canvas.width !== video.clientWidth) {
+                canvas.width = video.clientWidth;
+                canvas.height = video.clientHeight;
+            }
+
+            // 清除畫布，準備繪製新的一幀
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 取得掃描點 (包含成功與失敗時的疑似點)
+            const points = (result && result.getResultPoints()) || (err && err.resultPoints);
+
+            if (points && points.length > 0) {
+                drawBoundingBox(points);
+            }
+
+            if (result) {
+                console.log("掃描成功:", result.text);
+                document.getElementById("resultText").innerText = result.text;
+                // 成功時框變綠色，平時偵測中為黃色
+                drawBoundingBox(points, "#00FF00"); 
+            }
+        });
+    }
+
+    function drawBoundingBox(points, color = "#FFFF00") {
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+
+        // ZXing 的點座標是相對於影片原始解析度的，需要轉換比例
+        const scaleX = canvas.width / video.videoWidth;
+        const scaleY = canvas.height / video.videoHeight;
+
+        if (points.length === 2) {
+            // 1D Barcode: 畫一條粗線或長方形
+            const p1 = points[0];
+            const p2 = points[1];
+            ctx.moveTo(p1.x * scaleX, (p1.y * scaleY) - 20);
+            ctx.lineTo(p2.x * scaleX, (p2.y * scaleY) - 20);
+            ctx.lineTo(p2.x * scaleX, (p2.y * scaleY) + 20);
+            ctx.lineTo(p1.x * scaleX, (p1.y * scaleY) + 20);
+        } else {
+            // QR Code: 連接所有定位點
+            ctx.moveTo(points[0].x * scaleX, points[0].y * scaleY);
+            points.forEach(p => ctx.lineTo(p.x * scaleX, p.y * scaleY));
+        }
+        ctx.closePath();
+        ctx.stroke();
+    }
+
+    document.getElementById("cameraSelect").onchange = () => {
+        selectedDeviceId = document.getElementById("cameraSelect").value;
+        startScanning(selectedDeviceId);
+    };
+</script>
+</body>
+</html>
